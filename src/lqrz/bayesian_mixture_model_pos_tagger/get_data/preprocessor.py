@@ -5,8 +5,9 @@ import regex as re
 from glob import glob
 from collections import Counter
 from operator import itemgetter
-from typing import List, Generator
+from typing import List, Generator, Tuple
 import joblib
+import os
 
 
 class Preprocessor:
@@ -110,8 +111,8 @@ class Preprocessor:
             == (n_wordtypes, self._n_features)
         )
 
-    def save_outputs(self, output_path: str) -> None:
-        """Save outputs."""
+    def save_outputs(self, output_path: str) -> Tuple[str, str, str, str, str]:
+        """Save output artifacts."""
         # asserts
         assert isinstance(output_path, str)
         assert self._counter is not None
@@ -120,17 +121,34 @@ class Preprocessor:
         assert self._x_wordtype_counts_left is not None
         assert self._x_wordtype_counts_right is not None
 
+        _ = os.makedirs(output_path, exist_ok=True)
+
+        path_output_counter: str = f"{output_path}/counter.joblib"
+        path_output_wordtype_to_ix: str = f"{output_path}/wordtype_to_ix.joblib"
+        path_output_ix_to_wordtype: str = f"{output_path}/ix_to_wordtype.joblib"
+        path_output_x_wordtype_counts_left: str = f"{output_path}/x_wordtype_counts_left.joblib"
+        path_output_x_wordtype_counts_right: str = f"{output_path}/x_wordtype_counts_right.joblib"
+
         # dump
-        _ = joblib.dump(self._counter, f"{output_path}/counter.joblib")
-        _ = joblib.dump(self._wordtype_to_ix, f"{output_path}/wordtype_to_ix.joblib")
-        _ = joblib.dump(self._ix_to_wordtype, f"{output_path}/ix_to_wordtype.joblib")
-        _ = joblib.dump(self._x_wordtype_counts_left, f"{output_path}/x_wordtype_counts_left.joblib")
-        _ = joblib.dump(self._x_wordtype_counts_right, f"{output_path}/x_wordtype_counts_right.joblib")
+        _ = joblib.dump(self._counter, path_output_counter)
+        _ = joblib.dump(self._wordtype_to_ix, path_output_wordtype_to_ix)
+        _ = joblib.dump(self._ix_to_wordtype, path_output_ix_to_wordtype)
+        _ = joblib.dump(self._x_wordtype_counts_left, path_output_x_wordtype_counts_left)
+        _ = joblib.dump(self._x_wordtype_counts_right, path_output_x_wordtype_counts_right)
+
+        return (
+            path_output_counter,
+            path_output_wordtype_to_ix,
+            path_output_ix_to_wordtype,
+            path_output_x_wordtype_counts_left,
+            path_output_x_wordtype_counts_right,
+        )
 
     def preprocess(self, file_path: str) -> None:
         """Preprocess corpus."""
         # asserts
         assert isinstance(file_path, str)
+        assert len(glob(file_path)) > 0, f"No files found at location: {file_path}"
 
         _ = self._instantiate_counter(file_path=file_path)
         _ = self._featurise(file_path=file_path)
