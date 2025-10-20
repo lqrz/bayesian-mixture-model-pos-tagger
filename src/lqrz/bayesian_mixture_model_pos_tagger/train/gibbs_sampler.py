@@ -1,8 +1,9 @@
 """Gibbs sampler."""
 
+import os
 import numpy as np
 from scipy.special import gammaln, logsumexp
-from typing import Union, NoReturn, Tuple, List
+from typing import Union, NoReturn, Dict
 import joblib
 import logging
 
@@ -40,6 +41,11 @@ class GibbsSampler:
         self._x_wordtype_counts_sum_left = self._x_wordtype_counts_left.sum(axis=1)  # M (n_wordtypes)
         self._x_wordtype_counts_sum_right = self._x_wordtype_counts_right.sum(axis=1)  # M (n_wordtypes)
 
+        self._log_probs_trace = None
+        self._class_counts_trace = None
+        self._samples = None
+        self._x_word_type_posterior_probs = None
+
         # validate gibbs structures
         _ = self._validate_initialisation()
 
@@ -73,7 +79,7 @@ class GibbsSampler:
         """Validate initialisation structures."""
         assert self._x_class_priors.shape == (self._n_classes,)
         assert self._x_wordtype_class_assignments.shape == (self._n_wordtypes,)
-        assert self._x_class_counts.shape == (self._n_classes,)
+        assert self._x_class_counts.shape == (self._n_classes,), f'{self._x_class_counts.shape} != {self._n_classes}'
         assert self._x_wordtype_class_assignments.shape == (self._n_wordtypes,)
         assert self._x_class_wordtype_counts_left.shape == (self._n_classes, self._n_features)
         assert self._x_class_wordtype_counts_right.shape == (self._n_classes, self._n_features)
@@ -204,23 +210,43 @@ class GibbsSampler:
             # --- add word type assignment
             _ = self._add_class_assignment(ix=ix_wordtype, z=z_new)
 
-    def compute_posterior_class_probs(self, samples, wordtype_index) -> np.ndarray:
+    def compute_posterior_class_probs(self, wordtype_index: Dict[str, int]) -> np.ndarray:
         """Compute empirical posterior P(z_j = c | data) for one word type."""
+        # asserts
+        assert self._samples is not None
+
         x_counts: np.ndarray = np.zeros(self._n_classes, dtype=float)
-        for z in samples:
+        for z in self._samples:
             x_counts[z[wordtype_index]] += 1
         probs: np.ndarray = x_counts / x_counts.sum()
         return probs
 
-    @staticmethod
-    def compute_word_type_posterior_entropy(x_word_type_posterior_probs: np.ndarray, epsilon: float = 1e-12):
+    def compute_word_type_posterior_entropy(self, epsilon: float = 1e-12):
         """Compute word type posterior entropy."""
-        x_word_type_posterior_probs_clipped = np.clip(x_word_type_posterior_probs, epsilon, 1.0)
+        # asserts
+        assert self._x_word_type_posterior_probs is not None
+        assert isinstance(epsilon, float)
+        assert epsilon > 0
+
+        x_word_type_posterior_probs_clipped = np.clip(self._x_word_type_posterior_probs, epsilon, 1.0)
         return -(x_word_type_posterior_probs_clipped * np.log(x_word_type_posterior_probs_clipped)).sum(axis=1)
+
+    def save_outputs(self, output_path: str) -> None:
+        """Save output artifacts."""
+        # asserts
+        assert isinstance(output_path, str)
+        assert self._log_probs_trace is not None
+        assert self._class_counts_trace is not None
+        assert self._samples is not None
+        assert self._x_word_type_posterior_probs is not None
+
+        _ = os.makedirs(output_path, exist_ok=True)
+
+        _ = joblib.dump(self, f"{output_path}/sampler.joblib")
 
     def run(
         self, n_iterations: int, alpha: float, beta_left: float, beta_right: float, n_burn_in: int, n_thinning: int
-    ) -> Tuple[List[float], List[np.ndarray], List[int], np.ndarray]:
+    ) -> None:
         """Run Gibbs sampler."""
         # asserts
         assert isinstance(n_iterations, int)
@@ -257,4 +283,7 @@ class GibbsSampler:
 
         x_word_type_posterior_probs: np.ndarray = x_word_type_posterior_counts / float(n_posterior_samples_kept)
 
-        return log_probs_trace, class_counts_trace, samples, x_word_type_posterior_probs
+        self._log_probs_trace = log_probs_trace
+        self._class_counts_trace = class_counts_trace
+        self._samples = samples
+        self._x_word_type_posterior_probs = x_word_type_posterior_probs
