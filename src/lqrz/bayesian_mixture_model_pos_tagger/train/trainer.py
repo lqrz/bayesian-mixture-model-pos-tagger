@@ -1,8 +1,11 @@
 """Trainer."""
 
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from joblib import Parallel, delayed
+from dataclasses import asdict
 
+from lqrz.bayesian_mixture_model_pos_tagger.train.trainer_config import TrainerConfig
 from lqrz.bayesian_mixture_model_pos_tagger.get_data.preprocessor import Preprocessor
 from lqrz.bayesian_mixture_model_pos_tagger.train.gibbs_sampler import GibbsSampler
 
@@ -26,6 +29,7 @@ class Trainer:
         n_burn_in: int,
         n_thinning: int,
         path_output: str,
+        seed: int,
     ) -> None:
         """Run gibbs sampler."""
         # asserts
@@ -39,12 +43,14 @@ class Trainer:
         assert isinstance(n_burn_in, int)
         assert isinstance(n_thinning, int)
         assert isinstance(path_output, str)
+        assert isinstance(seed, int)
 
         # run
         sampler = GibbsSampler.instantiate(
             path_wordtype_counts_left=path_wordtype_counts_left,
             path_wordtype_counts_right=path_wordtype_counts_right,
             n_classes=n_classes,
+            seed=seed,
         )
         _ = sampler.run(
             n_iterations=n_iterations,
@@ -82,6 +88,21 @@ class Trainer:
         return path_wordtype_counts_left, path_wordtype_counts_right
 
     @classmethod
+    def _run_concurrent(
+        cls, configs: List[TrainerConfig], n_workers: int, prefer: str = "processes", verbose: int = 10
+    ) -> None:
+        """Run concurrently."""
+        _ = Parallel(n_jobs=n_workers, prefer=prefer, verbose=verbose)(
+            delayed(cls._run_sampler)(**asdict(x)) for x in configs
+        )
+
+    @classmethod
+    def _run_sequential(cls, configs: List[TrainerConfig]) -> None:
+        """Run sequentially."""
+        for x in configs:
+            _ = cls._run_sampler(**asdict(x))
+
+    @classmethod
     def run(
         cls,
         path_input_data: str,
@@ -93,7 +114,8 @@ class Trainer:
         betas_right: List[float],
         ns_burn_in: List[int],
         ns_thinning: List[int],
-    ):
+        n_workers: Optional[int] = 1,
+    ) -> None:
         """Run."""
         assert isinstance(path_input_data, str)
         assert isinstance(path_output, str) and len(path_output) > 0
@@ -111,32 +133,38 @@ class Trainer:
         assert all([isinstance(x, float) for x in betas_right])
         assert all([isinstance(x, int) for x in ns_burn_in])
         assert all([isinstance(x, int) for x in ns_thinning])
+        assert isinstance(n_workers, int) and n_workers > 0
 
         # run preprocessor
         path_output_preprocessor: str = f"{path_output}/preprocessor"
+
         _ = logging.info(f"Running preprocessor. Saving outputs in: {path_output_preprocessor}")
+
         path_wordtype_counts_left, path_wordtype_counts_right = cls._run_preprocessor(
             path_input_data=path_input_data,
             path_output=path_output_preprocessor,
         )
 
-        for nc, ni, alpha, beta_left, beta_right, nbi, nt in zip(
-            n_classes, n_iterations, alphas, betas_left, betas_right, ns_burn_in, ns_thinning
-        ):
-
-            path_output_train_run: str = f"{path_output}/train/{nc}_{ni}_{alpha}_{beta_left}_{beta_right}_{nbi}_{nt}"
-            _ = logging.info(
-                f"Running sampler for {nc}_{ni}_{alpha}_{beta_left}_{beta_right}_{nbi}_{nt}. Saving outputs in: {path_output_train_run}"
-            )
-            _ = cls._run_sampler(
+        # trainer configs
+        configs: List[TrainerConfig] = [
+            TrainerConfig(
                 path_wordtype_counts_left=path_wordtype_counts_left,
                 path_wordtype_counts_right=path_wordtype_counts_right,
-                n_classes=nc,
-                n_iterations=ni,
+                path_output=f"{path_output}/train/{nc}_{ni}_{alpha}_{beta_left}_{beta_right}_{nbi}_{nt}",
                 alpha=alpha,
                 beta_left=beta_left,
                 beta_right=beta_right,
+                n_classes=nc,
+                n_iterations=ni,
                 n_burn_in=nbi,
                 n_thinning=nt,
-                path_output=path_output_train_run,
             )
+            for nc, ni, alpha, beta_left, beta_right, nbi, nt in zip(
+                n_classes, n_iterations, alphas, betas_left, betas_right, ns_burn_in, ns_thinning
+            )
+        ]
+
+        if n_workers > 1:
+            cls._run_concurrent(configs=configs, n_workers=n_workers)
+        else:
+            cls._run_sequential(configs=configs)
