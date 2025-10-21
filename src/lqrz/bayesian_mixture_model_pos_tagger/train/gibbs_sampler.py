@@ -3,7 +3,7 @@
 import os
 import numpy as np
 from scipy.special import gammaln, logsumexp
-from typing import Union, NoReturn, Dict
+from typing import Union, NoReturn, Dict, Optional
 import joblib
 import logging
 
@@ -11,22 +11,27 @@ import logging
 class GibbsSampler:
     """GibbsSampler."""
 
-    def __init__(self, x_wordtype_counts_left: np.ndarray, x_wordtype_counts_right: np.ndarray, n_classes: int):
+    def __init__(
+        self, x_wordtype_counts_left: np.ndarray, x_wordtype_counts_right: np.ndarray, n_classes: int, seed: int
+    ):
         """Init."""
         # validate input params
         assert isinstance(x_wordtype_counts_left, np.ndarray)
         assert isinstance(x_wordtype_counts_right, np.ndarray)
         assert isinstance(n_classes, int)
         assert n_classes > 0
+        assert isinstance(seed, int)
 
         self._x_wordtype_counts_left = x_wordtype_counts_left
         self._x_wordtype_counts_right = x_wordtype_counts_right
         self._n_classes = n_classes
 
+        self._rng = np.random.default_rng(seed=seed)
+
         # initialise gibbs structures
         self._x_class_priors = np.array([1 / self._n_classes] * self._n_classes)  # shape: Z (n_classes,)
         self._n_wordtypes, self._n_features = self._x_wordtype_counts_left.shape
-        self._x_wordtype_class_assignments = np.random.choice(
+        self._x_wordtype_class_assignments = self._rng.choice(
             range(len(self._x_class_priors)), p=self._x_class_priors, size=self._n_wordtypes
         )  # shape: M (n_wordtypes,)
         self._x_class_counts = np.bincount(self._x_wordtype_class_assignments)  # shape: Z (n_classes,)
@@ -51,7 +56,11 @@ class GibbsSampler:
 
     @classmethod
     def instantiate(
-        cls, path_wordtype_counts_left: str, path_wordtype_counts_right: str, n_classes: int
+        cls,
+        path_wordtype_counts_left: str,
+        path_wordtype_counts_right: str,
+        n_classes: int,
+        seed: Optional[int] = 1234,
     ) -> "GibbsSampler":
         """Instantiate GibbsSampler."""
         # asserts
@@ -73,13 +82,14 @@ class GibbsSampler:
             x_wordtype_counts_left=x_wordtype_counts_left,
             x_wordtype_counts_right=x_wordtype_counts_right,
             n_classes=n_classes,
+            seed=seed,
         )
 
     def _validate_initialisation(self) -> Union[None, NoReturn]:
         """Validate initialisation structures."""
         assert self._x_class_priors.shape == (self._n_classes,)
         assert self._x_wordtype_class_assignments.shape == (self._n_wordtypes,)
-        assert self._x_class_counts.shape == (self._n_classes,), f'{self._x_class_counts.shape} != {self._n_classes}'
+        assert self._x_class_counts.shape == (self._n_classes,), f"{self._x_class_counts.shape} != {self._n_classes}"
         assert self._x_wordtype_class_assignments.shape == (self._n_wordtypes,)
         assert self._x_class_wordtype_counts_left.shape == (self._n_classes, self._n_features)
         assert self._x_class_wordtype_counts_right.shape == (self._n_classes, self._n_features)
@@ -194,7 +204,7 @@ class GibbsSampler:
     def _run_sweep(self, alpha: float, beta_left: float, beta_right: float) -> None:
         """Run Gibbs sweep."""
         # --- gibbs sweep
-        for ix_wordtype in np.random.permutation(self._n_wordtypes):
+        for ix_wordtype in self._rng.permutation(self._n_wordtypes):
 
             # --- remove word type assignment
             z_old: int = self._remove_class_assignment(ix=ix_wordtype)
